@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { IngestionForm } from './ingestion-form';
 import { JsonEditor } from './json-editor';
-import { Copy, Check, Terminal, Sparkles, Box } from 'lucide-react';
+import { Copy, Check, Terminal, Sparkles, Zap } from 'lucide-react';
 import { MOJOutput } from '@/lib/schema-validation';
 import { transformToMOJ, ingestSpec } from '@/lib/moj-transformer'; // keep ingestSpec for text input
 import { ingestUrlAction } from '@/app/actions/ingest';
@@ -14,11 +14,16 @@ export function Dashboard() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleIngest = async (data: string, type: 'url' | 'text') => {
+  const handleIngest = async (data: string, type: 'url' | 'text', provider: 'swagger' | 'postman') => {
     setIsLoading(true);
     setError(null);
     try {
       let spec;
+
+      if (provider === 'postman') {
+        throw new Error('Postman integration is coming soon! Please use Swagger/OpenAPI for now.');
+      }
+
       if (type === 'url') {
          const result = await ingestUrlAction(data);
          if (!result.success || !result.data) {
@@ -61,10 +66,10 @@ export function Dashboard() {
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 bg-linear-to-br from-indigo-500 to-violet-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Box className="w-5 h-5 text-white" />
+              <Zap className="w-5 h-5 text-white" fill="currentColor" />
             </div>
             <span className="font-bold text-lg tracking-tight bg-clip-text text-transparent bg-linear-to-r from-white to-zinc-400">
-              MOJ Generator
+              API to MOJ
             </span>
           </div>
           <div className="flex items-center gap-4">
@@ -83,13 +88,13 @@ export function Dashboard() {
             <span>AI-Ready API Specifications</span>
           </div>
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-white max-w-3xl mx-auto leading-tight">
-            Transform Verbose APIs into <br/>
+            Turn Complex API Docs into <br />
             <span className="text-transparent bg-clip-text bg-linear-to-r from-indigo-400 via-violet-400 to-fuchsia-400">
-              Machine-Optimized JSON
+              AI-Optimized JSON
             </span>
           </h1>
           <p className="text-zinc-400 text-lg max-w-2xl mx-auto leading-relaxed">
-            Ingest Swagger/OpenAPI specs and convert them into a highly structured, predictive format designed for AI agents.
+            Stop feeding LLMs fluff. Convert Swagger/OpenAPI specs into a token-efficient, predictive format designed for high-performance AI agents.
           </p>
         </div>
 

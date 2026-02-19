@@ -6,18 +6,19 @@ import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 interface IngestionFormProps {
-  onIngest: (data: string, type: 'url' | 'text') => Promise<void>;
+  onIngest: (data: string, type: 'url' | 'text', provider: 'swagger' | 'postman') => Promise<void>;
   isLoading: boolean;
 }
 
 export function IngestionForm({ onIngest, isLoading }: IngestionFormProps) {
   const [activeTab, setActiveTab] = useState<'url' | 'text'>('url');
   const [inputValue, setInputValue] = useState('');
+  const [provider, setProvider] = useState<'swagger' | 'postman'>('swagger');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputValue.trim()) return;
-    onIngest(inputValue, activeTab);
+    onIngest(inputValue, activeTab, provider);
   };
 
   return (
@@ -49,6 +50,26 @@ export function IngestionForm({ onIngest, isLoading }: IngestionFormProps) {
 
         {/* content */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Provider Selection */}
+          <div className="flex items-center gap-3 mb-2 px-1">
+            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Source Provider</span>
+            <div className="relative group">
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as 'swagger' | 'postman')}
+                className="appearance-none bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs font-medium rounded-md pl-3 pr-8 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 hover:bg-zinc-800 hover:border-zinc-600 transition-all cursor-pointer shadow-sm"
+              >
+                <option value="swagger">Swagger / OpenAPI</option>
+                <option value="postman">Postman Collection</option>
+              </select>
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500 group-hover:text-zinc-300 transition-colors">
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
           <div className="relative">
             {activeTab === 'url' ? (
               <input
