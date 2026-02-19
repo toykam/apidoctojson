@@ -3,9 +3,47 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
 import * as cheerio from 'cheerio';
 
-export async function ingestUrlAction(url: string) {
-  console.log(`[Ingest] Fetching: ${url}`);
+export async function ingestUrlAction(inputUrl: string, provider: 'swagger' | 'postman' = 'swagger') {
+    console.log(`[Ingest] Fetching: ${inputUrl}, Provider: ${provider}`);
   try {
+      // --- POSTMAN PATH ---
+      if (provider === 'postman') {
+          // Expected format: https://documenter.getpostman.com/view/{ownerId}/{slug}
+          // or just a raw collection link if the user has it
+
+          // 1. Extract info from URL
+          // Match /view/:ownerId/:slug
+          const match = inputUrl.match(/view\/([^\/]+)\/([^\/?]+)/);
+
+          let fetchUrl = inputUrl;
+
+          if (match) {
+              const ownerId = match[1];
+              const slug = match[2];
+              // Construct the hidden API URL
+              // https://documenter.gw.postman.com/api/collections/2676638/2sAYQUptZc?segregateAuth=true&versionTag=latest
+              fetchUrl = `https://documenter.gw.postman.com/api/collections/${ownerId}/${slug}?segregateAuth=true&versionTag=latest`;
+          }
+
+          console.log(`[Ingest] Fetching Postman Collection from: ${fetchUrl}`);
+          const res = await fetch(fetchUrl);
+
+          if (!res.ok) {
+              throw new Error(`Failed to fetch Postman collection: ${res.status} ${res.statusText}`);
+          }
+
+          const data = await res.json();
+          return { success: true, data: data };
+      }
+
+      // --- SWAGGER/OPENAPI PATH ---
+      let url = inputUrl;
+
+      // Basic formatting
+      if (!url.startsWith('http')) {
+          url = `https://${url}`;
+      }
+
     const res = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; MOJ-Converter/1.0)',

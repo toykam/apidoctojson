@@ -6,6 +6,7 @@ import { JsonEditor } from './json-editor';
 import { Copy, Check, Terminal, Sparkles, Zap } from 'lucide-react';
 import { MOJOutput } from '@/lib/schema-validation';
 import { transformToMOJ, ingestSpec } from '@/lib/moj-transformer'; // keep ingestSpec for text input
+import { transformPostmanToMOJ } from '@/lib/postman-transformer';
 import { ingestUrlAction } from '@/app/actions/ingest';
 
 export function Dashboard() {
@@ -19,31 +20,41 @@ export function Dashboard() {
     setError(null);
     try {
       let spec;
-
-      if (provider === 'postman') {
-        throw new Error('Postman integration is coming soon! Please use Swagger/OpenAPI for now.');
-      }
+      let finalMoj;
 
       if (type === 'url') {
-         const result = await ingestUrlAction(data);
+        const result = await ingestUrlAction(data, provider);
          if (!result.success || !result.data) {
              throw new Error(result.error || 'Failed to ingest URL');
          }
          spec = result.data;
+
+        if (provider === 'postman') {
+          finalMoj = transformPostmanToMOJ(spec);
+        } else {
+          finalMoj = transformToMOJ(spec);
+        }
       } else {
          try {
-             // For text input, we can still use the client-side parser or move it to server too. 
-             // Keeping client-side for text input is fine as it doesn't have CORS issues.
+           // Try to parse JSON
              const parsed = JSON.parse(data);
-             spec = await ingestSpec(parsed);
+
+           // Simple detection for Postman vs OpenAPI
+           if (parsed.info && parsed.item) {
+             finalMoj = transformPostmanToMOJ(parsed);
+           } else {
+               spec = await ingestSpec(parsed);
+               finalMoj = transformToMOJ(spec);
+             }
          } catch {
-             // If JSON parse fails, try passing raw string (might be yaml, swagger-parser handles it)
+           // If JSON parse fails, try passing raw string (might be yaml)
+           // This fallback is mostly for OpenAPI YAML
              spec = await ingestSpec(data);
+           finalMoj = transformToMOJ(spec);
          }
       }
       
-      const moj = transformToMOJ(spec);
-      setMojOutput(moj);
+      setMojOutput(finalMoj);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse specification');
     } finally {

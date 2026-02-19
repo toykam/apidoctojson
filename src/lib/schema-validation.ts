@@ -18,3 +18,4 @@ export const MOJOutputSchema = z.object({
 });
 
 export type MOJOutput = z.infer<typeof MOJOutputSchema>;
+export type MOJEndpoint = MOJOutput['endpoints'][number];
