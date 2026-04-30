@@ -60,6 +60,8 @@ interface PostmanAuth {
   type?: string;
 }
 
+type PostmanExpectedError = NonNullable<MOJEndpoint['expected_errors']>[number];
+
 export function transformPostmanToMOJ(collection: PostmanCollection): MOJOutput {
   const endpoints: MOJEndpoint[] = [];
 
@@ -118,12 +120,14 @@ function mapPostmanRequest(item: PostmanItem): MOJEndpoint | null {
   const context = item.name || '';
   const blueprint = mapBlueprint(request, path, method);
   const successSchema = generateSuccessSchema(item.response);
+  const expectedErrors = generateExpectedErrors(item.response);
 
   return {
     id: endpointId,
     context,
     blueprint,
-    success_schema: successSchema
+    success_schema: successSchema,
+    expected_errors: expectedErrors.length > 0 ? expectedErrors : undefined,
   };
 }
 
@@ -141,6 +145,7 @@ function mapBlueprint(request: PostmanRequest, path: string, method: string) {
     const headers: string[] = [];
     const parameters: Record<string, unknown> = {};
     let body: unknown = undefined;
+    const urlObject = getPostmanUrlObject(request.url);
 
     if (request.header && Array.isArray(request.header)) {
         request.header.forEach((h) => {
@@ -148,8 +153,8 @@ function mapBlueprint(request: PostmanRequest, path: string, method: string) {
         });
     }
 
-    if (request.url && request.url.query && Array.isArray(request.url.query)) {
-        request.url.query.forEach((q) => {
+    if (urlObject?.query && Array.isArray(urlObject.query)) {
+        urlObject.query.forEach((q) => {
              if (q.key) {
                  parameters[q.key] = {
                      type: 'string',
@@ -159,8 +164,8 @@ function mapBlueprint(request: PostmanRequest, path: string, method: string) {
         });
     }
 
-    if (request.url && request.url.variable && Array.isArray(request.url.variable)) {
-         request.url.variable.forEach((v) => {
+    if (urlObject?.variable && Array.isArray(urlObject.variable)) {
+         urlObject.variable.forEach((v) => {
              if (v.key) {
                  parameters[v.key] = {
                      type: 'string',
@@ -179,6 +184,7 @@ function mapBlueprint(request: PostmanRequest, path: string, method: string) {
     } else if (request.body && request.body.mode === 'formdata') {
          const formData: Record<string, unknown> = {};
          request.body.formdata?.forEach((f) => {
+             if (!f.key) return;
              formData[f.key] = { type: f.type || 'string' };
          });
          body = formData;
@@ -210,6 +216,31 @@ function generateSuccessSchema(responses?: PostmanResponse[]): unknown {
     }
     
     return {};
+}
+
+function generateExpectedErrors(responses?: PostmanResponse[]): PostmanExpectedError[] {
+    if (!responses || !Array.isArray(responses)) return [];
+
+    return responses
+      .filter((response) => {
+        const code = response.code ?? 0;
+        return code >= 400 || code === 0;
+      })
+      .map((response) => {
+        const parsed = parseJsonLike(response.body);
+        const schema =
+          parsed !== undefined ? simplifySchema(generateSchemaFromData(parsed)) : undefined;
+
+        return {
+          code: String(response.code ?? 'default'),
+          message: fallbackErrorMessage(response.code),
+          schema,
+        };
+      });
+}
+
+function getPostmanUrlObject(url?: string | PostmanUrl): PostmanUrl | undefined {
+  return url && typeof url === 'object' ? url : undefined;
 }
 
 function generateSchemaFromData(data: unknown): SchemaShape {
@@ -268,4 +299,25 @@ function parseJsonLike(value?: string): JsonValue | undefined {
       return undefined;
     }
   }
+}
+
+function fallbackErrorMessage(code?: number): string {
+  const normalized = code ? String(code) : 'default';
+  const knownMessages: Record<string, string> = {
+    '400': 'Bad Request',
+    '401': 'Unauthorized',
+    '403': 'Forbidden',
+    '404': 'Not Found',
+    '405': 'Method Not Allowed',
+    '409': 'Conflict',
+    '422': 'Unprocessable Entity',
+    '429': 'Too Many Requests',
+    '500': 'Internal Server Error',
+    '502': 'Bad Gateway',
+    '503': 'Service Unavailable',
+    '504': 'Gateway Timeout',
+    default: 'Unexpected Error',
+  };
+
+  return knownMessages[normalized] ?? `HTTP ${normalized} Error`;
 }

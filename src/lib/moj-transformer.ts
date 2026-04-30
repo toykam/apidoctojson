@@ -2,9 +2,74 @@ import SwaggerParser from '@apidevtools/swagger-parser';
 import { OpenAPI } from 'openapi-types';
 import { MOJOutput } from './schema-validation';
 
-export async function ingestSpec(source: string | object): Promise<OpenAPI.Document> {
+type JsonMap = Record<string, unknown>;
+
+type ReferenceObject = { $ref: string };
+
+type ExampleObject = {
+  value?: unknown;
+};
+
+type MediaTypeObject = {
+  schema?: SchemaLike;
+  example?: unknown;
+  examples?: Record<string, ReferenceObject | ExampleObject>;
+};
+
+type RequestBodyLike = {
+  content?: Record<string, MediaTypeObject>;
+};
+
+type ResponseLike = {
+  description?: string;
+  content?: Record<string, MediaTypeObject>;
+  schema?: SchemaLike;
+  examples?: Record<string, unknown>;
+};
+
+type ParameterLike = {
+  name: string;
+  in: string;
+  description?: string;
+  required?: boolean;
+  schema?: SchemaLike;
+  type?: string;
+};
+
+type OperationLike = {
+  summary?: string;
+  description?: string;
+  operationId?: string;
+  parameters?: Array<ParameterLike | ReferenceObject>;
+  requestBody?: RequestBodyLike | ReferenceObject;
+  responses?: Record<string, ResponseLike | ReferenceObject | undefined>;
+};
+
+type PathItemLike = {
+  parameters?: Array<ParameterLike | ReferenceObject>;
+} & Record<string, unknown>;
+
+type SchemaLike = {
+  $ref?: string;
+  type?: string | string[];
+  nullable?: boolean;
+  example?: unknown;
+  enum?: unknown[];
+  allOf?: SchemaLike[];
+  oneOf?: SchemaLike[];
+  anyOf?: SchemaLike[];
+  properties?: Record<string, SchemaLike>;
+  additionalProperties?: boolean | SchemaLike;
+  items?: SchemaLike;
+};
+
+type ExpectedError = NonNullable<MOJOutput['endpoints'][number]['expected_errors']>[number];
+
+const HTTP_METHODS = new Set(['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace']);
+
+export async function ingestSpec(source: string | OpenAPI.Document): Promise<OpenAPI.Document> {
   try {
-    const api = await SwaggerParser.validate(source as object);
+    const api = await SwaggerParser.validate(source);
     return api as OpenAPI.Document;
   } catch (err) {
     console.error('Error parsing Swagger/OpenAPI spec:', err);
@@ -19,29 +84,29 @@ export function transformToMOJ(spec: OpenAPI.Document): MOJOutput {
     return { endpoints: [] };
   }
 
-  for (const [path, methods] of Object.entries(spec.paths)) {
-    if (!methods) continue;
+  for (const [path, rawPathItem] of Object.entries(spec.paths)) {
+    if (!rawPathItem) continue;
 
-    for (const [method, operation] of Object.entries(methods)) {
+    const pathItem = rawPathItem as PathItemLike;
+    const pathParameters = Array.isArray(pathItem.parameters) ? pathItem.parameters : [];
+
+    for (const [method, rawOperation] of Object.entries(pathItem)) {
       if (!isHttpMethod(method)) continue;
-      if (typeof operation !== 'object' || !operation) continue; // Skip if not a valid operation object
-      if (isReferenceObject(operation)) continue;
+      if (!isPlainObject(rawOperation) || isReferenceObject(rawOperation)) continue;
 
-      const op = operation;
-      const pathParameters = Array.isArray(methods.parameters) ? methods.parameters : [];
-      const operationParameters = Array.isArray(op.parameters) ? op.parameters : [];
+      const operation = rawOperation as OperationLike;
+      const operationParameters = Array.isArray(operation.parameters) ? operation.parameters : [];
       const mergedParameters = [...pathParameters, ...operationParameters];
 
-      const endpointId = generateEndpointId(path, method, op.operationId);
-      const context = extractContext(op);
-      const blueprint = mapBlueprint(op, path, method, mergedParameters);
-      const successSchema = generateSuccessSchema(op);
+      const successSchema = generateSuccessSchema(operation);
+      const expectedErrors = generateExpectedErrors(operation);
 
       endpoints.push({
-        id: endpointId,
-        context,
-        blueprint,
+        id: generateEndpointId(path, method, operation.operationId),
+        context: extractContext(operation),
+        blueprint: mapBlueprint(operation, path, method, mergedParameters),
         success_schema: successSchema,
+        expected_errors: expectedErrors.length > 0 ? expectedErrors : undefined,
       });
     }
   }
@@ -51,26 +116,24 @@ export function transformToMOJ(spec: OpenAPI.Document): MOJOutput {
 
 function generateEndpointId(path: string, method: string, operationId?: string): string {
   if (operationId) return operationId;
-  
-  // Fallback: create slug from method + path
-  // e.g., GET /users/{id} -> get_users_id
+
   const cleanPath = path
-    .replace(/[{}]/g, '') // Remove braces
-    .replace(/^\//, '')   // Remove leading slash
-    .replace(/\//g, '_'); // Replace slashes with underscores
-    
+    .replace(/[{}]/g, '')
+    .replace(/^\//, '')
+    .replace(/\//g, '_');
+
   return `${method.toLowerCase()}_${cleanPath}`;
 }
 
-function extractContext(operation: OpenAPI.Operation): string {
+function extractContext(operation: OperationLike): string {
   return operation.summary || operation.description || 'No description provided';
 }
 
 function mapBlueprint(
-  operation: OpenAPI.Operation,
+  operation: OperationLike,
   path: string,
   method: string,
-  parametersList: OpenAPI.Parameter[] | OpenAPI.ReferenceObject[]
+  parametersList: Array<ParameterLike | ReferenceObject>
 ) {
   const headers: string[] = [];
   const parameters: Record<string, unknown> = {};
@@ -81,9 +144,26 @@ function mapBlueprint(
 
     if (param.in === 'header') {
       headers.push(param.name);
-    } else if (param.in === 'query' || param.in === 'path') {
+      continue;
+    }
+
+    if (param.in === 'query' || param.in === 'path') {
       parameters[param.name] = {
-        type: readSchemaType(param.schema),
+        type: readSchemaType(param.schema) || param.type || 'string',
+        description: param.description,
+        required: param.required,
+      };
+      continue;
+    }
+
+    if (param.in === 'body') {
+      body = simplifySchema(param.schema);
+      continue;
+    }
+
+    if (param.in === 'formData') {
+      parameters[param.name] = {
+        type: readSchemaType(param.schema) || param.type || 'string',
         description: param.description,
         required: param.required,
       };
@@ -91,7 +171,7 @@ function mapBlueprint(
   }
 
   if (operation.requestBody && !isReferenceObject(operation.requestBody)) {
-    body = extractSchemaFromContent(operation.requestBody.content);
+    body = extractSchemaFromContent(operation.requestBody.content, body);
   }
 
   return {
@@ -103,29 +183,81 @@ function mapBlueprint(
   };
 }
 
-function generateSuccessSchema(operation: OpenAPI.Operation): unknown {
+function generateSuccessSchema(operation: OperationLike): unknown {
   const responses = operation.responses;
   if (!responses) return {};
 
-  const successCode = Object.keys(responses).find(code => code.startsWith('2'));
-  if (!successCode) return {};
+  const rankedSuccessCodes = Object.keys(responses)
+    .filter((code) => code.startsWith('2'))
+    .sort((left, right) => rankResponseCode(left) - rankResponseCode(right));
 
-  const successResponse = responses[successCode];
-  if (!successResponse || isReferenceObject(successResponse)) {
-    return {};
+  for (const code of rankedSuccessCodes) {
+    const response = responses[code];
+    if (!response || isReferenceObject(response)) continue;
+
+    const extracted = extractResponseSchema(response);
+    if (!isEmptySchema(extracted)) {
+      return extracted;
+    }
   }
 
-  return extractSchemaFromContent(successResponse.content);
+  return {};
 }
 
-function extractSchemaFromContent(content?: OpenAPI.Content): unknown {
-  if (!content) return {};
+function generateExpectedErrors(operation: OperationLike): ExpectedError[] {
+  const responses = operation.responses;
+  if (!responses) return [];
+
+  const rankedErrorCodes = Object.keys(responses)
+    .filter((code) => code === 'default' || isErrorResponseCode(code))
+    .sort((left, right) => rankErrorCode(left) - rankErrorCode(right));
+
+  const expectedErrors: ExpectedError[] = [];
+
+  for (const code of rankedErrorCodes) {
+    const response = responses[code];
+    if (!response || isReferenceObject(response)) continue;
+
+    const schema = extractResponseSchema(response);
+    expectedErrors.push({
+      code,
+      message: response.description || fallbackErrorMessage(code),
+      schema: isEmptySchema(schema) ? undefined : schema,
+    });
+  }
+
+  return expectedErrors;
+}
+
+function extractResponseSchema(response: ResponseLike): unknown {
+  const schemaFromContent = extractSchemaFromContent(response.content);
+  if (!isEmptySchema(schemaFromContent)) {
+    return schemaFromContent;
+  }
+
+  if (response.schema) {
+    return simplifySchema(response.schema);
+  }
+
+  const firstExample = response.examples ? Object.values(response.examples)[0] : undefined;
+  if (firstExample !== undefined) {
+    return simplifyExample(firstExample);
+  }
+
+  return {};
+}
+
+function extractSchemaFromContent(
+  content?: Record<string, MediaTypeObject>,
+  fallback: unknown = {}
+): unknown {
+  if (!content) return fallback;
 
   const preferredType = pickPreferredMediaType(Object.keys(content));
-  if (!preferredType) return {};
+  if (!preferredType) return fallback;
 
   const mediaType = content[preferredType];
-  if (!mediaType) return {};
+  if (!mediaType) return fallback;
 
   if (mediaType.schema) {
     return simplifySchema(mediaType.schema);
@@ -140,10 +272,10 @@ function extractSchemaFromContent(content?: OpenAPI.Content): unknown {
     return simplifyExample(firstExample.value);
   }
 
-  return {};
+  return fallback;
 }
 
-function simplifySchema(schema: OpenAPI.SchemaObject | OpenAPI.ReferenceObject | undefined): unknown {
+function simplifySchema(schema: SchemaLike | ReferenceObject | undefined): unknown {
   if (!schema) return {};
   if (isReferenceObject(schema)) return schema.$ref;
 
@@ -156,8 +288,7 @@ function simplifySchema(schema: OpenAPI.SchemaObject | OpenAPI.ReferenceObject |
   }
 
   if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
-    const merged = schema.allOf.map((item) => simplifySchema(item));
-    return mergeSchemaParts(merged);
+    return mergeSchemaParts(schema.allOf.map((item) => simplifySchema(item)));
   }
 
   if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
@@ -170,9 +301,8 @@ function simplifySchema(schema: OpenAPI.SchemaObject | OpenAPI.ReferenceObject |
 
   if (schema.type === 'object' || schema.properties || schema.additionalProperties) {
     const simplified: Record<string, unknown> = {};
-    const properties = schema.properties ?? {};
 
-    for (const [key, prop] of Object.entries(properties)) {
+    for (const [key, prop] of Object.entries(schema.properties ?? {})) {
       simplified[key] = simplifySchema(prop);
     }
 
@@ -195,7 +325,7 @@ function simplifyExample(value: unknown): unknown {
     return value.map((entry) => simplifyExample(entry));
   }
 
-  if (value && typeof value === 'object') {
+  if (isPlainObject(value)) {
     const simplified: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
       simplified[key] = simplifyExample(entry);
@@ -208,7 +338,7 @@ function simplifyExample(value: unknown): unknown {
 
 function mergeSchemaParts(parts: unknown[]): unknown {
   if (parts.every(isPlainObject)) {
-    return parts.reduce<Record<string, unknown>>((acc, part) => ({ ...acc, ...part }), {});
+    return parts.reduce<Record<string, unknown>>((acc, part) => ({ ...acc, ...(part as JsonMap) }), {});
   }
 
   return parts[0] ?? {};
@@ -217,11 +347,34 @@ function mergeSchemaParts(parts: unknown[]): unknown {
 function pickPreferredMediaType(mediaTypes: string[]): string | null {
   if (mediaTypes.length === 0) return null;
 
-  const preferred = mediaTypes.find((type) => type.includes('json') || type.endsWith('+json'));
+  const preferred = mediaTypes.find(
+    (type) =>
+      type.includes('json') ||
+      type.endsWith('+json') ||
+      type.includes('xml') ||
+      type.includes('text')
+  );
+
   return preferred ?? mediaTypes[0] ?? null;
 }
 
-function readSchemaType(schema?: OpenAPI.SchemaObject | OpenAPI.ReferenceObject): string {
+function rankResponseCode(code: string): number {
+  const preferredOrder = ['200', '201', '202', '203', '206', '204'];
+  const preferredIndex = preferredOrder.indexOf(code);
+  if (preferredIndex >= 0) return preferredIndex;
+
+  const parsed = Number.parseInt(code, 10);
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+}
+
+function rankErrorCode(code: string): number {
+  if (code === 'default') return Number.MAX_SAFE_INTEGER;
+
+  const parsed = Number.parseInt(code, 10);
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER - 1 : parsed;
+}
+
+function readSchemaType(schema?: SchemaLike | ReferenceObject): string {
   if (!schema) return 'any';
   if (isReferenceObject(schema)) return schema.$ref;
   if (Array.isArray(schema.type)) return schema.type.join(' | ');
@@ -229,14 +382,45 @@ function readSchemaType(schema?: OpenAPI.SchemaObject | OpenAPI.ReferenceObject)
   return schema.type || 'any';
 }
 
-function isReferenceObject(value: unknown): value is OpenAPI.ReferenceObject {
-  return typeof value === 'object' && value !== null && '$ref' in value;
+function isReferenceObject(value: unknown): value is ReferenceObject {
+  return isPlainObject(value) && typeof value.$ref === 'string';
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value: unknown): value is JsonMap {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isHttpMethod(method: string): method is keyof OpenAPI.PathItemObject {
-  return ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'].includes(method);
+function isEmptySchema(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (isPlainObject(value)) return Object.keys(value).length === 0;
+  return false;
+}
+
+function isErrorResponseCode(code: string): boolean {
+  return /^[45]\d\d$/.test(code);
+}
+
+function fallbackErrorMessage(code: string): string {
+  const knownMessages: Record<string, string> = {
+    '400': 'Bad Request',
+    '401': 'Unauthorized',
+    '403': 'Forbidden',
+    '404': 'Not Found',
+    '405': 'Method Not Allowed',
+    '409': 'Conflict',
+    '422': 'Unprocessable Entity',
+    '429': 'Too Many Requests',
+    '500': 'Internal Server Error',
+    '502': 'Bad Gateway',
+    '503': 'Service Unavailable',
+    '504': 'Gateway Timeout',
+    default: 'Unexpected Error',
+  };
+
+  return knownMessages[code] ?? `HTTP ${code} Error`;
+}
+
+function isHttpMethod(method: string): boolean {
+  return HTTP_METHODS.has(method);
 }

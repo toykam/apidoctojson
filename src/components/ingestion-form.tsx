@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowRight, FileJson, Globe, Loader2 } from 'lucide-react';
+import { ArrowRight, FileJson, Globe, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { twMerge } from 'tailwind-merge';
 import type { IngestAuth, AuthType, IngestProvider } from '@/app/actions/ingest';
 
@@ -78,87 +78,156 @@ export function IngestionForm({ onIngest, isLoading }: IngestionFormProps) {
 
         {/* content */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* Provider Selection */}
-          <div className="flex items-center gap-3 mb-2 px-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Source Provider</span>
-            <div className="relative group">
-              <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value as IngestProvider)}
-                className="appearance-none bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs font-medium rounded-md pl-3 pr-8 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 hover:bg-zinc-800 hover:border-zinc-600 transition-all cursor-pointer shadow-sm"
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 px-1 text-zinc-300">
+              <Globe size={16} className="text-indigo-400" />
+              <span className="text-sm font-semibold tracking-wide">Source Provider</span>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setProvider('swagger')}
+                className={twMerge(
+                  'rounded-2xl border p-4 text-left transition-all',
+                  provider === 'swagger'
+                    ? 'border-indigo-500/70 bg-indigo-500/10 shadow-lg shadow-indigo-500/10'
+                    : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-700 hover:bg-zinc-900/80'
+                )}
               >
-                <option value="swagger">Swagger / OpenAPI</option>
-                <option value="postman">Postman Collection</option>
-              </select>
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500 group-hover:text-zinc-300 transition-colors">
-                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-white">Swagger / OpenAPI</span>
+                  <span className={twMerge(
+                    'h-3 w-3 rounded-full border',
+                    provider === 'swagger' ? 'border-indigo-300 bg-indigo-400' : 'border-zinc-600'
+                  )} />
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+                  Best for Swagger UI links, direct `swagger.json` or `openapi.json`, and raw OpenAPI YAML or JSON.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setProvider('postman')}
+                className={twMerge(
+                  'rounded-2xl border p-4 text-left transition-all',
+                  provider === 'postman'
+                    ? 'border-orange-500/70 bg-orange-500/10 shadow-lg shadow-orange-500/10'
+                    : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-700 hover:bg-zinc-900/80'
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-white">Postman Collection</span>
+                  <span className={twMerge(
+                    'h-3 w-3 rounded-full border',
+                    provider === 'postman' ? 'border-orange-300 bg-orange-400' : 'border-zinc-600'
+                  )} />
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+                  Use published Postman documentation links or raw collection JSON to generate the MOJ structure.
+                </p>
+              </button>
             </div>
           </div>
 
           {activeTab === 'url' && (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Documentation Auth</span>
-                <select
-                  value={authType}
-                  onChange={(e) => setAuthType(e.target.value as AuthType)}
-                  className="appearance-none bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs font-medium rounded-md px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 hover:bg-zinc-800 hover:border-zinc-600 transition-all"
-                >
-                  <option value="none">No Auth</option>
-                  <option value="bearer">Bearer Token</option>
-                  <option value="basic">Basic Auth</option>
-                  <option value="apiKey">Custom Header</option>
-                </select>
+            <div className="rounded-2xl border border-emerald-500/20 bg-linear-to-br from-emerald-500/10 via-zinc-950 to-zinc-950 p-4 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-emerald-300">
+                    <ShieldCheck size={16} />
+                    <span className="text-sm font-semibold tracking-wide">Documentation Auth</span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-zinc-400">
+                    Add credentials when the docs page, Swagger config, or spec URL is protected.
+                  </p>
+                </div>
+                <div className="relative min-w-40">
+                  <KeyRound size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-emerald-300/80" />
+                  <select
+                    value={authType}
+                    onChange={(e) => setAuthType(e.target.value as AuthType)}
+                    className="w-full appearance-none rounded-xl border border-emerald-500/30 bg-zinc-950/90 py-2 pl-9 pr-8 text-sm font-medium text-zinc-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  >
+                    <option value="none">No Auth</option>
+                    <option value="bearer">Bearer Token</option>
+                    <option value="basic">Basic Auth</option>
+                    <option value="apiKey">Custom Header</option>
+                  </select>
+                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500">
+                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                </div>
               </div>
 
-              {authType === 'bearer' && (
-                <input
-                  type="password"
-                  placeholder="Bearer token"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all font-mono text-sm"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                />
+              {authType === 'none' && (
+                <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-950/70 px-4 py-3 text-sm text-zinc-400">
+                  Public documentation selected. If this source later returns `401` or `403`, switch the auth mode here and retry.
+                </div>
               )}
 
-              {authType === 'basic' && (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <input
-                    type="text"
-                    placeholder="Username"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all text-sm"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                  />
+              {authType === 'bearer' && (
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-emerald-200/80">
+                    Bearer Token
+                  </label>
                   <input
                     type="password"
-                    placeholder="Password"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all text-sm"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Paste access token"
+                    className="w-full rounded-xl border border-emerald-500/25 bg-zinc-950 px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-all font-mono text-sm"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
                   />
                 </div>
               )}
 
+              {authType === 'basic' && (
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-emerald-200/80">
+                    Basic Credentials
+                  </label>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <input
+                      type="text"
+                      placeholder="Username"
+                      className="w-full rounded-xl border border-emerald-500/25 bg-zinc-950 px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-all text-sm"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                    />
+                    <input
+                      type="password"
+                      placeholder="Password"
+                      className="w-full rounded-xl border border-emerald-500/25 bg-zinc-950 px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-all text-sm"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
               {authType === 'apiKey' && (
-                <div className="grid gap-3 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-                  <input
-                    type="text"
-                    placeholder="Header name"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all text-sm"
-                    value={headerName}
-                    onChange={(e) => setHeaderName(e.target.value)}
-                  />
-                  <input
-                    type="password"
-                    placeholder="Header value"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all font-mono text-sm"
-                    value={headerValue}
-                    onChange={(e) => setHeaderValue(e.target.value)}
-                  />
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-emerald-200/80">
+                    Custom Header
+                  </label>
+                  <div className="grid gap-3 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                    <input
+                      type="text"
+                      placeholder="Header name"
+                      className="w-full rounded-xl border border-emerald-500/25 bg-zinc-950 px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-all text-sm"
+                      value={headerName}
+                      onChange={(e) => setHeaderName(e.target.value)}
+                    />
+                    <input
+                      type="password"
+                      placeholder="Header value"
+                      className="w-full rounded-xl border border-emerald-500/25 bg-zinc-950 px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-all font-mono text-sm"
+                      value={headerValue}
+                      onChange={(e) => setHeaderValue(e.target.value)}
+                    />
+                  </div>
                 </div>
               )}
             </div>

@@ -75,12 +75,31 @@ export async function ingestUrlAction(
 
       if (scrapedUrl) {
         console.log(`[Ingest] Found spec URL: ${scrapedUrl}`);
-        specUrl = scrapedUrl;
-        const specRes = await fetch(specUrl, { headers: requestHeaders, cache: 'no-store' });
-        if (!specRes.ok) {
-          throw new Error(formatFetchError('scraped spec URL', specUrl, specRes.status, specRes.statusText));
+        const specRes = await fetch(scrapedUrl, { headers: requestHeaders, cache: 'no-store' });
+        if (specRes.ok) {
+          specUrl = scrapedUrl;
+          specContent = await specRes.text();
+        } else {
+          console.warn(
+            `[Ingest] Scraped spec URL failed (${specRes.status} ${specRes.statusText}), continuing fallback discovery: ${scrapedUrl}`
+          );
+          const fallbackUrl = await findSpecUrlByProbing(url, requestHeaders, [scrapedUrl]);
+          if (fallbackUrl) {
+            console.log(`[Ingest] Fallback candidate resolved spec URL: ${fallbackUrl}`);
+            specUrl = fallbackUrl;
+            const fallbackRes = await fetch(specUrl, { headers: requestHeaders, cache: 'no-store' });
+            if (!fallbackRes.ok) {
+              throw new Error(
+                `Failed to fetch resolved spec URL ${specUrl}: ${fallbackRes.status} ${fallbackRes.statusText}`
+              );
+            }
+            specContent = await fallbackRes.text();
+          } else {
+            throw new Error(
+              `Failed to fetch discovered spec URL ${scrapedUrl}: ${specRes.status} ${specRes.statusText}`
+            );
+          }
         }
-        specContent = await specRes.text();
       } else {
         console.warn('[Ingest] Could not find spec URL in HTML, attempting to parse as-is (might fail if not embedded)');
       }
@@ -110,12 +129,12 @@ export async function ingestUrlAction(
     }
 
     try {
-      const api = await SwaggerParser.validate(parsedInput as object);
+      const api = await SwaggerParser.validate(parsedInput as unknown as string);
       return { success: true, data: api };
     } catch (err) {
       console.warn('[Ingest] Strict validation failed, attempting lenient parse...', err);
       try {
-        const api = await SwaggerParser.parse(parsedInput as object);
+        const api = await SwaggerParser.parse(parsedInput as unknown as string);
         console.log('[Ingest] Lenient parse successful.');
         return { success: true, data: api };
       } catch (parseErr) {
@@ -167,41 +186,56 @@ async function findSpecUrlInHtml(
     }
   }
 
-  if (html.includes('swagger-ui')) {
-    const candidates = [
-      'swagger-initializer.js',
-      './swagger-initializer.js',
-      '../swagger-initializer.js',
-      '../../v3/api-docs/swagger-config',
-      '../../v3/api-docs',
-      '../../v2/api-docs',
-      '/swagger-config.json',
-      '/v3/api-docs/swagger-config',
-      '/v3/api-docs',
-      '/v2/api-docs',
-      '/openapi.json',
-      '/swagger.json',
-    ];
+  return findSpecUrlByProbing(baseUrl, headers);
+}
 
-    for (const candidate of candidates) {
-      const candidateUrl = resolveUrl(candidate, baseUrl);
-      try {
-        console.log(`[Ingest] HTML scraping inconclusive, trying candidate: ${candidateUrl}`);
-        const res = await fetch(candidateUrl, { headers, cache: 'no-store' });
-        if (!res.ok) continue;
+async function findSpecUrlByProbing(
+  baseUrl: string,
+  headers: HeadersInit,
+  excludedUrls: string[] = []
+): Promise<string | null> {
+  const excluded = new Set(excludedUrls);
+  const candidates = [
+    'swagger-initializer.js',
+    './swagger-initializer.js',
+    '../swagger-initializer.js',
+    '../../v3/api-docs/swagger-config',
+    '../../v3/api-docs',
+    '../../v2/api-docs',
+    '../../v2/swagger.json',
+    '../../v2/swagger.yaml',
+    '/swagger-config.json',
+    '/v3/api-docs/swagger-config',
+    '/v3/api-docs',
+    '/v2/api-docs',
+    '/v2/swagger.json',
+    '/v2/swagger.yaml',
+    '/openapi.json',
+    '/openapi.yaml',
+    '/swagger.json',
+    '/swagger.yaml',
+    '/api-docs',
+  ];
 
-        const text = await res.text();
-        const discovered = findSpecReference(text, candidateUrl);
-        if (discovered) {
-          return discovered;
-        }
+  for (const candidate of candidates) {
+    const candidateUrl = resolveUrl(candidate, baseUrl);
+    if (excluded.has(candidateUrl)) continue;
+    try {
+      console.log(`[Ingest] HTML scraping inconclusive, trying candidate: ${candidateUrl}`);
+      const res = await fetch(candidateUrl, { headers, cache: 'no-store' });
+      if (!res.ok) continue;
 
-        if (looksLikeJson(text)) {
-          return candidateUrl;
-        }
-      } catch (error) {
-        console.log(`[Ingest] Candidate check failed for ${candidate}`, error);
+      const text = await res.text();
+      const discovered = findSpecReference(text, candidateUrl);
+      if (discovered) {
+        return discovered;
       }
+
+      if (looksLikeSpecDocument(text)) {
+        return candidateUrl;
+      }
+    } catch (error) {
+      console.log(`[Ingest] Candidate check failed for ${candidate}`, error);
     }
   }
 
@@ -244,6 +278,11 @@ function formatFetchError(target: string, url: string, status: number, statusTex
 }
 
 function findSpecReference(content: string, baseUrl: string): string | null {
+  const resolvedVariableUrl = resolveUrlVariable(content, baseUrl);
+  if (resolvedVariableUrl) {
+    return resolvedVariableUrl;
+  }
+
   const configUrlPatterns = [
     /configUrl\s*:\s*["']([^"']+)["']/,
     /"configUrl"\s*:\s*["']([^"']+)["']/,
@@ -270,6 +309,45 @@ function findSpecReference(content: string, baseUrl: string): string | null {
   }
 
   return null;
+}
+
+function resolveUrlVariable(content: string, baseUrl: string): string | null {
+  const urlVariableMatch =
+    content.match(/\burl\s*:\s*([A-Za-z_$][\w$]*)/) ??
+    content.match(/"url"\s*:\s*([A-Za-z_$][\w$]*)/);
+
+  if (!urlVariableMatch?.[1]) {
+    return null;
+  }
+
+  const variableName = urlVariableMatch[1];
+  const literalAssignments = extractStringAssignments(content);
+  const directAssignment = literalAssignments.get(variableName);
+
+  if (directAssignment) {
+    return resolveUrl(directAssignment, baseUrl);
+  }
+
+  const defaultUrlMatch = content.match(/\bdefaultDefinitionUrl\s*=\s*["']([^"']+)["']/);
+  if (variableName === 'definitionURL' && defaultUrlMatch?.[1]) {
+    return resolveUrl(defaultUrlMatch[1], baseUrl);
+  }
+
+  return null;
+}
+
+function extractStringAssignments(content: string): Map<string, string> {
+  const assignments = new Map<string, string>();
+  const regex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*["']([^"']+)["']/g;
+
+  for (const match of content.matchAll(regex)) {
+    const [, name, value] = match;
+    if (name && value) {
+      assignments.set(name, value);
+    }
+  }
+
+  return assignments;
 }
 
 async function resolveConfigToSpec(
@@ -361,7 +439,13 @@ async function fetchSpecContent(url: string, headers: HeadersInit): Promise<unkn
   }
 }
 
-function looksLikeJson(text: string): boolean {
+function looksLikeSpecDocument(text: string): boolean {
   const trimmed = text.trim();
-  return trimmed.startsWith('{') || trimmed.startsWith('[');
+
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return true;
+  }
+
+  const yamlSignals = ['openapi:', 'swagger:', 'info:', 'paths:'];
+  return yamlSignals.some((signal) => trimmed.includes(signal));
 }

@@ -13,6 +13,15 @@ export const MOJOutputSchema = z.object({
         body: z.any().optional(),
       }),
       success_schema: z.any().describe('Example of a successful JSON response'),
+      expected_errors: z
+        .array(
+          z.object({
+            code: z.string().describe('HTTP status code or response label'),
+            message: z.string().describe('Expected error summary or description'),
+            schema: z.any().optional().describe('Example or schema for the error response body'),
+          })
+        )
+        .optional(),
     })
   ),
 });
