@@ -10,7 +10,7 @@ interface JsonEditorProps {
 
 export function JsonEditor({ value, readOnly = true, height = "100%" }: JsonEditorProps) {
   
-  const handleEditorDidMount: OnMount = (editor, monaco) => {
+  const handleEditorDidMount: OnMount = (editor) => {
     // Optional: minimize distraction
     editor.updateOptions({
       minimap: { enabled: false },

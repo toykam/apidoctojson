@@ -2,23 +2,51 @@
 
 import { useState } from 'react';
 import { ArrowRight, FileJson, Globe, Loader2 } from 'lucide-react';
-import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import type { IngestAuth, AuthType, IngestProvider } from '@/app/actions/ingest';
 
 interface IngestionFormProps {
-  onIngest: (data: string, type: 'url' | 'text', provider: 'swagger' | 'postman') => Promise<void>;
+  onIngest: (
+    data: string,
+    type: 'url' | 'text',
+    provider: IngestProvider,
+    auth: IngestAuth
+  ) => Promise<void>;
   isLoading: boolean;
 }
 
 export function IngestionForm({ onIngest, isLoading }: IngestionFormProps) {
   const [activeTab, setActiveTab] = useState<'url' | 'text'>('url');
   const [inputValue, setInputValue] = useState('');
-  const [provider, setProvider] = useState<'swagger' | 'postman'>('swagger');
+  const [provider, setProvider] = useState<IngestProvider>('swagger');
+  const [authType, setAuthType] = useState<AuthType>('none');
+  const [token, setToken] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [headerName, setHeaderName] = useState('');
+  const [headerValue, setHeaderValue] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputValue.trim()) return;
-    onIngest(inputValue, activeTab, provider);
+    onIngest(inputValue, activeTab, provider, buildAuthState());
+  };
+
+  const buildAuthState = (): IngestAuth => {
+    switch (authType) {
+      case 'bearer':
+        return { type: authType, token: token.trim() };
+      case 'basic':
+        return { type: authType, username: username.trim(), password };
+      case 'apiKey':
+        return {
+          type: authType,
+          headerName: headerName.trim(),
+          headerValue: headerValue.trim(),
+        };
+      default:
+        return { type: 'none' };
+    }
   };
 
   return (
@@ -56,7 +84,7 @@ export function IngestionForm({ onIngest, isLoading }: IngestionFormProps) {
             <div className="relative group">
               <select
                 value={provider}
-                onChange={(e) => setProvider(e.target.value as 'swagger' | 'postman')}
+                onChange={(e) => setProvider(e.target.value as IngestProvider)}
                 className="appearance-none bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs font-medium rounded-md pl-3 pr-8 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 hover:bg-zinc-800 hover:border-zinc-600 transition-all cursor-pointer shadow-sm"
               >
                 <option value="swagger">Swagger / OpenAPI</option>
@@ -69,6 +97,72 @@ export function IngestionForm({ onIngest, isLoading }: IngestionFormProps) {
               </div>
             </div>
           </div>
+
+          {activeTab === 'url' && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Documentation Auth</span>
+                <select
+                  value={authType}
+                  onChange={(e) => setAuthType(e.target.value as AuthType)}
+                  className="appearance-none bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs font-medium rounded-md px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 hover:bg-zinc-800 hover:border-zinc-600 transition-all"
+                >
+                  <option value="none">No Auth</option>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="basic">Basic Auth</option>
+                  <option value="apiKey">Custom Header</option>
+                </select>
+              </div>
+
+              {authType === 'bearer' && (
+                <input
+                  type="password"
+                  placeholder="Bearer token"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all font-mono text-sm"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                />
+              )}
+
+              {authType === 'basic' && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <input
+                    type="text"
+                    placeholder="Username"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all text-sm"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                  />
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all text-sm"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {authType === 'apiKey' && (
+                <div className="grid gap-3 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                  <input
+                    type="text"
+                    placeholder="Header name"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all text-sm"
+                    value={headerName}
+                    onChange={(e) => setHeaderName(e.target.value)}
+                  />
+                  <input
+                    type="password"
+                    placeholder="Header value"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all font-mono text-sm"
+                    value={headerValue}
+                    onChange={(e) => setHeaderValue(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="relative">
             {activeTab === 'url' ? (
@@ -109,7 +203,7 @@ export function IngestionForm({ onIngest, isLoading }: IngestionFormProps) {
       </div>
       
       <p className="text-center text-zinc-500 text-xs mt-4">
-        Supported formats: OpenAPI 3.0, 3.1, Swagger 2.0 (JSON/YAML)
+        Supported formats: OpenAPI 3.0, 3.1, Swagger 2.0, Postman collections
       </p>
     </div>
   );

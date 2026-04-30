@@ -1,6 +1,66 @@
 import { MOJOutput, MOJEndpoint } from './schema-validation';
 
-export function transformPostmanToMOJ(collection: any): MOJOutput {
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+interface PostmanCollection {
+  item?: PostmanItem[];
+}
+
+interface PostmanItem {
+  name?: string;
+  item?: PostmanItem[];
+  request?: PostmanRequest;
+  response?: PostmanResponse[];
+}
+
+interface PostmanRequest {
+  method?: string;
+  header?: PostmanHeader[];
+  url?: string | PostmanUrl;
+  body?: PostmanBody;
+  auth?: PostmanAuth;
+}
+
+interface PostmanResponse {
+  code?: number;
+  body?: string;
+}
+
+interface PostmanHeader {
+  key?: string;
+  value?: string;
+  description?: string;
+}
+
+interface PostmanUrl {
+  raw?: string;
+  path?: string[] | string;
+  query?: PostmanQuery[];
+  variable?: PostmanVariable[];
+}
+
+interface PostmanQuery {
+  key?: string;
+  value?: string | null;
+  description?: string;
+}
+
+interface PostmanVariable {
+  key?: string;
+  description?: string;
+}
+
+interface PostmanBody {
+  mode?: 'raw' | 'formdata';
+  raw?: string;
+  formdata?: Array<{ key?: string; type?: string }>;
+}
+
+interface PostmanAuth {
+  type?: string;
+}
+
+export function transformPostmanToMOJ(collection: PostmanCollection): MOJOutput {
   const endpoints: MOJEndpoint[] = [];
 
   if (!collection || !collection.item) {
@@ -8,13 +68,11 @@ export function transformPostmanToMOJ(collection: any): MOJOutput {
   }
 
   // Recursive function to process items (folders or requests)
-  function processItems(items: any[]) {
+  function processItems(items: PostmanItem[]) {
     for (const item of items) {
       if (item.item) {
-        // It's a folder, recurse
         processItems(item.item);
       } else if (item.request) {
-        // It's a request
         const endpoint = mapPostmanRequest(item);
         if (endpoint) {
           endpoints.push(endpoint);
@@ -28,39 +86,36 @@ export function transformPostmanToMOJ(collection: any): MOJOutput {
   return { endpoints };
 }
 
-function mapPostmanRequest(item: any): MOJEndpoint | null {
+function mapPostmanRequest(item: PostmanItem): MOJEndpoint | null {
   const request = item.request;
+  if (!request) return null;
+
   const method = request.method || 'GET';
-  
-  // Extract path
   let path = '';
+
   if (typeof request.url === 'string') {
-     // Try to parse string url to get path
-     try {
-         const urlObj = new URL(request.url);
-         path = urlObj.pathname;
-     } catch {
-         path = request.url;
-     }
+    try {
+      const urlObj = new URL(request.url);
+      path = urlObj.pathname;
+    } catch {
+      path = request.url;
+    }
   } else if (request.url && request.url.path) {
-    // Postman URL object
     const p = request.url.path;
     path = Array.isArray(p) ? '/' + p.join('/') : p;
   } else if (request.url && request.url.raw) {
-      try {
-          // rare case where raw is full url but path array is missing?
-          const urlObj = new URL(request.url.raw);
-          path = urlObj.pathname;
-      } catch {
-          path = request.url.raw;
-      }
+    try {
+      const urlObj = new URL(request.url.raw);
+      path = urlObj.pathname;
+    } catch {
+      path = request.url.raw;
+    }
   }
 
   if (!path) return null;
 
   const endpointId = generateEndpointId(path, method);
-  const context = item.name || '';  // Postman request name is usually the summary
-  
+  const context = item.name || '';
   const blueprint = mapBlueprint(request, path, method);
   const successSchema = generateSuccessSchema(item.response);
 
@@ -73,71 +128,64 @@ function mapPostmanRequest(item: any): MOJEndpoint | null {
 }
 
 function generateEndpointId(path: string, method: string): string {
-  // Simple slug generation
-    const cleanPath = path
+  const cleanPath = path
     .replace(/[{}]/g, '')
     .replace(/^\//, '')
     .replace(/\//g, '_')
-    .replace(/[:]/g, ''); // Remove colons from path params if any
-    
+    .replace(/[:]/g, '');
+
   return `${method.toLowerCase()}_${cleanPath}`;
 }
 
-function mapBlueprint(request: any, path: string, method: string) {
+function mapBlueprint(request: PostmanRequest, path: string, method: string) {
     const headers: string[] = [];
-    const parameters: Record<string, any> = {};
-    let body: any = undefined;
+    const parameters: Record<string, unknown> = {};
+    let body: unknown = undefined;
 
-    // Headers
     if (request.header && Array.isArray(request.header)) {
-        request.header.forEach((h: any) => {
+        request.header.forEach((h) => {
             if (h.key) headers.push(h.key);
         });
     }
 
-    // Query Params
     if (request.url && request.url.query && Array.isArray(request.url.query)) {
-        request.url.query.forEach((q: any) => {
+        request.url.query.forEach((q) => {
              if (q.key) {
                  parameters[q.key] = {
-                     type: 'string', // Postman doesn't strictly type params
+                     type: 'string',
                      description: q.description
                  };
              }
         });
     }
 
-    // Path variables
-    // Postman usually denotes path variables in the path strings like :id or {{id}}
-    // We can try to extract them if they are in the `variable` array of the URL object
     if (request.url && request.url.variable && Array.isArray(request.url.variable)) {
-         request.url.variable.forEach((v: any) => {
+         request.url.variable.forEach((v) => {
              if (v.key) {
                  parameters[v.key] = {
                      type: 'string',
                      description: v.description,
-                     required: true // path vars are usually required
+                     required: true
                  };
              }
          });
     }
 
-    // Body
     if (request.body && request.body.mode === 'raw') {
-        try {
-            const raw = request.body.raw;
-            if (raw && (raw.trim().startsWith('{') || raw.trim().startsWith('['))) {
-                const parsedBody = JSON.parse(raw);
-                body = simplifySchema(generateSchemaFromData(parsedBody));
-            }
-        } catch {}
+        const parsedBody = parseJsonLike(request.body.raw);
+        if (parsedBody !== undefined) {
+          body = simplifySchema(generateSchemaFromData(parsedBody));
+        }
     } else if (request.body && request.body.mode === 'formdata') {
-         // Form data
-         const formData: Record<string, any> = {};
-         request.body.formdata.forEach((f: any) => {
+         const formData: Record<string, unknown> = {};
+         request.body.formdata?.forEach((f) => {
              formData[f.key] = { type: f.type || 'string' };
          });
          body = formData;
+    }
+
+    if (request.auth && request.auth.type && request.auth.type !== 'noauth' && !headers.includes('Authorization')) {
+      headers.push('Authorization');
     }
 
     return {
@@ -149,47 +197,46 @@ function mapBlueprint(request: any, path: string, method: string) {
     };
 }
 
-function generateSuccessSchema(responses: any[]): any {
+function generateSuccessSchema(responses?: PostmanResponse[]): unknown {
     if (!responses || !Array.isArray(responses)) return {};
 
-    // Find a success response (200-299)
-    const success = responses.find((r: any) => r.code >= 200 && r.code < 300);
+    const success = responses.find((r) => (r.code ?? 0) >= 200 && (r.code ?? 0) < 300);
     
     if (success && success.body) {
-        try {
-             const parsed = JSON.parse(success.body);
-             return simplifySchema(generateSchemaFromData(parsed));
-        } catch {
-            return {};
+        const parsed = parseJsonLike(success.body);
+        if (parsed !== undefined) {
+          return simplifySchema(generateSchemaFromData(parsed));
         }
     }
     
     return {};
 }
 
-// Helper to infer schema from actual data (since Postman examples are data, not schemas)
-function generateSchemaFromData(data: any): any {
+function generateSchemaFromData(data: unknown): SchemaShape {
     if (data === null) return { type: 'null' };
     if (Array.isArray(data)) {
         const itemSchema = data.length > 0 ? generateSchemaFromData(data[0]) : { type: 'any' };
         return { type: 'array', items: itemSchema };
     }
     if (typeof data === 'object') {
-        const properties: Record<string, any> = {};
-        for (const key in data) {
-            properties[key] = generateSchemaFromData(data[key]);
+        const properties: Record<string, SchemaShape> = {};
+        for (const [key, value] of Object.entries(data)) {
+            properties[key] = generateSchemaFromData(value);
         }
         return { type: 'object', properties };
     }
     return { type: typeof data };
 }
 
-// Reusing the simplifier from logic, but adapted for our inferred schema structure
-function simplifySchema(schema: any): any {
+type SchemaShape =
+  | { type: string; properties?: Record<string, SchemaShape>; items?: SchemaShape }
+  | undefined;
+
+function simplifySchema(schema: SchemaShape): unknown {
     if (!schema) return {};
 
     if (schema.type === 'object' && schema.properties) {
-        const simplified: Record<string, any> = {};
+        const simplified: Record<string, unknown> = {};
         for (const [key, prop] of Object.entries(schema.properties)) {
             simplified[key] = simplifySchema(prop);
         }
@@ -199,4 +246,26 @@ function simplifySchema(schema: any): any {
     } else {
         return schema.type || 'any';
     }
+}
+
+function parseJsonLike(value?: string): JsonValue | undefined {
+  if (!value) return undefined;
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(trimmed) as JsonValue;
+  } catch {
+    try {
+      const withoutComments = trimmed
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      return JSON.parse(withoutComments) as JsonValue;
+    } catch {
+      return undefined;
+    }
+  }
 }

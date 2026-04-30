@@ -7,7 +7,7 @@ import { Copy, Check, Terminal, Sparkles, Zap } from 'lucide-react';
 import { MOJOutput } from '@/lib/schema-validation';
 import { transformToMOJ, ingestSpec } from '@/lib/moj-transformer'; // keep ingestSpec for text input
 import { transformPostmanToMOJ } from '@/lib/postman-transformer';
-import { ingestUrlAction } from '@/app/actions/ingest';
+import { ingestUrlAction, IngestAuth, IngestProvider } from '@/app/actions/ingest';
 
 export function Dashboard() {
   const [isLoading, setIsLoading] = useState(false);
@@ -15,7 +15,12 @@ export function Dashboard() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleIngest = async (data: string, type: 'url' | 'text', provider: 'swagger' | 'postman') => {
+  const handleIngest = async (
+    data: string,
+    type: 'url' | 'text',
+    provider: IngestProvider,
+    auth: IngestAuth
+  ) => {
     setIsLoading(true);
     setError(null);
     try {
@@ -23,7 +28,7 @@ export function Dashboard() {
       let finalMoj;
 
       if (type === 'url') {
-        const result = await ingestUrlAction(data, provider);
+        const result = await ingestUrlAction(data, provider, auth);
          if (!result.success || !result.data) {
              throw new Error(result.error || 'Failed to ingest URL');
          }
